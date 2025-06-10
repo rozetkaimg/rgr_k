@@ -30,9 +30,9 @@ static void initialize_reverse_map() {
 // --- Битовые представления элементов ---
 const std::string MORSE_DOT_BITS = "1";
 const std::string MORSE_DASH_BITS = "111";
-const std::string INTRA_ELEMENT_GAP = "0";      // Пауза между точками/тире
-const std::string BYTE_PART_GAP = "000";        // Пауза между двумя нибблами одного байта
-const std::string INTER_BYTE_GAP = "0000000";   // Пауза между целыми байтами
+const std::string INTRA_ELEMENT_GAP = "0";
+const std::string BYTE_PART_GAP = "000";
+const std::string INTER_BYTE_GAP = "0000000";
 
 // Вспомогательная функция: преобразовать строку Морзе (напр. ".-") в битовую строку ("10111")
 std::string morse_to_bit_string(const std::string& morse_code) {
