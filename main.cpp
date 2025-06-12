@@ -264,7 +264,10 @@ std::vector<unsigned char> from_hex_string(const std::string& hex) {
 
 int main(int argc, char* argv[]) {
     #ifdef _WIN32
-        setlocale(LC_ALL, "Russian");
+        // Устанавливаем кодировку ввода и вывода консоли на UTF-8.
+        // Это более надежный способ для C++ I/O, чем setlocale.
+        SetConsoleCP(CP_UTF8);
+        SetConsoleOutputCP(CP_UTF8);
     #endif
 
     if (argc > 1) {

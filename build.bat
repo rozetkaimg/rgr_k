@@ -1,45 +1,36 @@
 @echo off
 setlocal
 
-set CMAKE_GENERATOR="Visual Studio 17 2022"
-cmake --version >nul 2>nul
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ОШИБКА: CMake не найден.
-    echo Пожалуйста, установите CMake и убедитесь, что он добавлен в PATH.
-    echo.
+echo Building GOST library...
+g++ -shared -o libgost_cipher.dll gost\gost.cpp gost\gost_bridge.cpp -I./gost
+if errorlevel 1 (
+    echo GOST library compilation failed.
     exit /b 1
 )
 
-echo Создание директории 'build'...
-if not exist build mkdir build
-cd build
-echo.
-echo Запуск CMake для генерации проекта %CMAKE_GENERATOR%...
-cmake .. -G %CMAKE_GENERATOR%
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ОШИБКА: Не удалось выполнить команду CMake.
-    echo Убедитесь, что Visual Studio установлена корректно.
-    echo.
-    exit /b %ERRORLEVEL%
+echo Building Morse library...
+g++ -shared -o libmorse_cipher.dll morse\morse.cpp morse\morse_bridge.cpp -I./morse
+if errorlevel 1 (
+    echo Morse library compilation failed.
+    exit /b 1
 )
-echo.
-echo Сборка проекта...
-cmake --build . --config Release
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo ОШИБКА: Сборка проекта не удалась.
-    echo.
-    exit /b %ERRORLEVEL%
+
+echo Building ROT13 library...
+g++ -shared -o librot13_cipher.dll rot13\rot13_bitwise.cpp rot13\rot13_bridge.cpp -I./rot13
+if errorlevel 1 (
+    echo ROT13 library compilation failed.
+    exit /b 1
+)
+
+echo Building main executable...
+g++ main.cpp -o cipher_tool.exe -I./gost -I./morse -I./rot13
+if errorlevel 1 (
+    echo Main executable compilation failed.
+    exit /b 1
 )
 
 echo.
-echo -------------------------------------
-echo Сборка успешно завершена!
-echo.
-echo Исполняемый файл 'cipher_tool.exe' и библиотеки (.dll) находятся в директории:
-echo %cd%\Release
-echo -------------------------------------
+echo Build successful!
+echo All files have been created in the current directory.
 
 endlocal
