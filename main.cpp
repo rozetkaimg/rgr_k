@@ -458,8 +458,8 @@ void handleGostMenu() {
         }
 
         switch (choice) {
-            case 1: // Зашифровать текст
-            case 3: { // Зашифровать файл
+            case 1:
+            case 3: {
                 if (key_hex.empty()) {
                     GostKeyGenResultC key_res = funcs->generateKey();
                      if (key_res.success) {

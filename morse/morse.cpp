@@ -13,7 +13,6 @@ static const std::map<unsigned char, std::string> nibble_to_morse_map = {
     {0xC, "--."},  {0xD, "---"},  {0xE, "...."}, {0xF, "...-"}
 };
 
-// Обратная карта для декодирования, инициализируется один раз
 static std::map<std::string, unsigned char> morse_to_nibble_map;
 static bool is_reverse_map_initialized = false;
 
@@ -26,15 +25,12 @@ static void initialize_reverse_map() {
     }
 }
 
-
-// --- Битовые представления элементов ---
 const std::string MORSE_DOT_BITS = "1";
 const std::string MORSE_DASH_BITS = "111";
 const std::string INTRA_ELEMENT_GAP = "0";
 const std::string BYTE_PART_GAP = "000";
 const std::string INTER_BYTE_GAP = "0000000";
 
-// Вспомогательная функция: преобразовать строку Морзе (напр. ".-") в битовую строку ("10111")
 std::string morse_to_bit_string(const std::string& morse_code) {
     std::string bits;
     for (size_t i = 0; i < morse_code.length(); ++i) {
@@ -46,34 +42,28 @@ std::string morse_to_bit_string(const std::string& morse_code) {
     return bits;
 }
 
-
 MorseEncodedResult encodeTextToMorse(const std::string &plaintext) {
     MorseEncodedResult result;
     std::string final_bit_string;
 
-    // 1. Кодируем каждый БАЙТ текста
     for (size_t i = 0; i < plaintext.length(); ++i) {
         unsigned char byte = plaintext[i];
-        
-        // Делим байт на старший и младший нибблы
+
         unsigned char high_nibble = (byte >> 4) & 0x0F;
         unsigned char low_nibble = byte & 0x0F;
 
-        // Кодируем оба ниббла
         final_bit_string += morse_to_bit_string(nibble_to_morse_map.at(high_nibble));
-        final_bit_string += BYTE_PART_GAP; // Пауза между частями байта
+        final_bit_string += BYTE_PART_GAP;
         final_bit_string += morse_to_bit_string(nibble_to_morse_map.at(low_nibble));
 
         if (i < plaintext.length() - 1) {
-            final_bit_string += INTER_BYTE_GAP; // Пауза между байтами
+            final_bit_string += INTER_BYTE_GAP;
         }
     }
 
-    // 2. Упаковываем битовую строку в вектор байтов с метаданными
     std::vector<unsigned char> packed_bytes;
     uint64_t total_bits = final_bit_string.length();
-    
-    // Записываем 8 байт метаданных (длина в битах)
+
     packed_bytes.resize(sizeof(total_bits));
     std::memcpy(packed_bytes.data(), &total_bits, sizeof(total_bits));
 
@@ -88,7 +78,7 @@ MorseEncodedResult encodeTextToMorse(const std::string &plaintext) {
         }
     }
     if (bit_count > 0) {
-        current_byte <<= (8 - bit_count); // Добиваем нулями до полного байта
+        current_byte <<= (8 - bit_count);
         packed_bytes.push_back(current_byte);
     }
 
@@ -96,7 +86,6 @@ MorseEncodedResult encodeTextToMorse(const std::string &plaintext) {
     result.success = true;
     return result;
 }
-
 
 MorseDecodedResult decodeTextFromMorse(const std::vector<unsigned char> &binary_data) {
     MorseDecodedResult result;
@@ -106,7 +95,6 @@ MorseDecodedResult decodeTextFromMorse(const std::vector<unsigned char> &binary_
         return { {}, false, "Invalid data: too short." };
     }
 
-    // 1. Извлекаем метаданные и восстанавливаем битовую строку
     uint64_t total_bits;
     std::memcpy(&total_bits, binary_data.data(), sizeof(total_bits));
 
@@ -120,48 +108,55 @@ MorseDecodedResult decodeTextFromMorse(const std::vector<unsigned char> &binary_
     if (bit_string.length() > total_bits) {
         bit_string.resize(total_bits);
     }
-    
-    // 2. Парсим битовую строку, восстанавливая байты
+
     std::string plaintext_result;
     std::string current_morse_code;
     unsigned char reconstructed_byte = 0;
     bool is_high_nibble = true;
 
     for (size_t i = 0; i < bit_string.length(); ) {
-        // Ищем следующий разделитель (последовательность нулей)
         size_t gap_pos = bit_string.find('0', i);
-        if (gap_pos == std::string::npos) { // Дошли до конца
+        if (gap_pos == std::string::npos) {
             gap_pos = bit_string.length();
         }
 
-        // Извлекаем код морзе для элемента (точки или тире)
         std::string element_bits = bit_string.substr(i, gap_pos - i);
-        if (element_bits == MORSE_DOT_BITS) current_morse_code += '.';
-        else if (element_bits == MORSE_DASH_BITS) current_morse_code += '-';
+
+        if (!element_bits.empty()) {
+            if (element_bits == MORSE_DOT_BITS) {
+                current_morse_code += '.';
+            } else if (element_bits == MORSE_DASH_BITS) {
+                current_morse_code += '-';
+            } else {
+                return { {}, false, "Invalid Morse element found in data stream." };
+            }
+        }
 
         i = gap_pos;
-        
-        // Ищем длину паузы (считаем нули)
+
         size_t zero_count = 0;
         while(i < bit_string.length() && bit_string[i] == '0') {
             zero_count++;
             i++;
         }
 
-        // Если пауза большая, значит, мы закончили собирать код для ниббла
         if (zero_count >= 3 || i >= bit_string.length()) {
-            if (morse_to_nibble_map.count(current_morse_code)) {
-                unsigned char nibble = morse_to_nibble_map.at(current_morse_code);
-                if (is_high_nibble) {
-                    reconstructed_byte = (nibble << 4);
-                    is_high_nibble = false;
+            if (!current_morse_code.empty()) {
+                if (morse_to_nibble_map.count(current_morse_code)) {
+                    unsigned char nibble = morse_to_nibble_map.at(current_morse_code);
+                    if (is_high_nibble) {
+                        reconstructed_byte = (nibble << 4);
+                        is_high_nibble = false;
+                    } else {
+                        reconstructed_byte |= nibble;
+                        plaintext_result += static_cast<char>(reconstructed_byte);
+                        is_high_nibble = true;
+                    }
                 } else {
-                    reconstructed_byte |= nibble;
-                    plaintext_result += static_cast<char>(reconstructed_byte);
-                    is_high_nibble = true;
+                    return { {}, false, "Invalid Morse sequence for a nibble." };
                 }
+                current_morse_code.clear();
             }
-            current_morse_code.clear();
         }
     }
 
@@ -170,13 +165,10 @@ MorseDecodedResult decodeTextFromMorse(const std::vector<unsigned char> &binary_
     return result;
 }
 
-
-// --- Функции для работы с файлами (остаются без изменений) ---
-
 MorseFileOperationResult encodeFileToMorse(const std::string &inputFilePath, const std::string &outputFilePath) {
     std::ifstream inputFile(inputFilePath, std::ios::binary);
     if (!inputFile) return {false, "Error: Cannot open input file."};
-    
+
     std::string content((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
     inputFile.close();
 
@@ -187,7 +179,7 @@ MorseFileOperationResult encodeFileToMorse(const std::string &inputFilePath, con
 
     outputFile.write(reinterpret_cast<const char*>(encoded_data.binary_data.data()), encoded_data.binary_data.size());
     outputFile.close();
-    
+
     return {true, "File successfully encoded to universal binary Morse."};
 }
 
