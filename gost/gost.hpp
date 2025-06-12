@@ -1,4 +1,3 @@
-
 #ifndef GOST_CIPHER_HPP
 #define GOST_CIPHER_HPP
 
@@ -7,7 +6,7 @@
 #include <vector>
 const unsigned int GOST_KEY_SIZE_BITS = 256;
 const unsigned int GOST_KEY_SIZE_BYTES = GOST_KEY_SIZE_BITS / 8;
-const unsigned int GOST_BLOCK_SIZE_BYTES = 8; 
+const unsigned int GOST_BLOCK_SIZE_BYTES = 8;
 const unsigned int GOST_IV_SIZE_BYTES = GOST_BLOCK_SIZE_BYTES;
 std::vector<unsigned char> hexStringToBytes(const std::string &hex);
 std::string bytesToHexString(const std::vector<unsigned char> &bytes);
@@ -60,5 +59,15 @@ GostFileOperationResult encryptFileGOST(const std::string &inputFilePath,
 GostFileOperationResult decryptFileGOST(const std::string &inputFilePath,
                                         const std::string &outputFilePath,
                                         const std::string &key_hex);
+
+// --- Added for Key Generation ---
+struct GostKeyGenResult {
+    std::string key_hex;
+    bool success = false;
+    std::string error_message;
+};
+
+GostKeyGenResult generateKeyGOST();
+
 
 #endif // GOST_CIPHER_HPP

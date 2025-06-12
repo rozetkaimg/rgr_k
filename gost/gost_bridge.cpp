@@ -3,7 +3,7 @@
 #include <cstring>
 #include <string>
 
-// Helper function to duplicate a C++ string to a C-style string
+
 char* duplicate_string(const std::string& s) {
     char* cstr = new char[s.length() + 1];
     std::strcpy(cstr, s.c_str());
@@ -60,9 +60,41 @@ DLL_EXPORT GostFileOperationResultC decryptFileGOST_C(const char* inputFilePath,
     return c_result;
 }
 
-
-DLL_EXPORT void free_gost_string_C(char* str) {
-    delete[] str;
+// --- Added for Key Generation ---
+DLL_EXPORT GostKeyGenResultC generateKeyGOST_C() {
+    GostKeyGenResult result = generateKeyGOST();
+    GostKeyGenResultC c_result;
+    c_result.success = result.success;
+    c_result.key_hex = result.success ? duplicate_string(result.key_hex) : nullptr;
+    c_result.error_message = !result.success ? duplicate_string(result.error_message) : nullptr;
+    return c_result;
 }
+
+// --- Memory Freeing Functions ---
+DLL_EXPORT void free_gost_encrypted_result_C(GostEncryptedTextResultC* result) {
+    if (!result) return;
+    delete[] result->iv_hex;
+    delete[] result->ciphertext_hex;
+    delete[] result->error_message;
+}
+
+DLL_EXPORT void free_gost_decrypted_result_C(GostDecryptedTextResultC* result) {
+    if (!result) return;
+    delete[] result->plaintext;
+    delete[] result->error_message;
+}
+
+DLL_EXPORT void free_gost_file_result_C(GostFileOperationResultC* result) {
+    if (!result) return;
+    delete[] result->message;
+    delete[] result->used_iv_hex;
+}
+
+DLL_EXPORT void free_gost_key_result_C(GostKeyGenResultC* result) {
+    if (!result) return;
+    delete[] result->key_hex;
+    delete[] result->error_message;
+}
+
 
 } // extern "C"

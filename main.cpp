@@ -37,35 +37,44 @@ void printHelp() {
               << "  --cipher <name>      Указать шифр: 'gost', 'morse', 'rot13'. (Обязательно для работы с флагами)\n"
               << "  -e, --encrypt        Зашифровать входные данные.\n"
               << "  -d, --decrypt        Расшифровать входные данные.\n"
+              << "  --generate-key       Сгенерировать ключ ГОСТ и вывести его.\n"
               << "  --text <string>      Текстовая строка для обработки.\n"
               << "  --input <path>       Путь к входному файлу.\n"
               << "  --output <path>      Путь к выходному файту.\n"
-              << "  --key <hex_string>   Ключ для ГОСТ (64 hex-символа).\n"
+              << "  --key <hex_string>   Ключ для ГОСТ (64 hex-символа). Необязателен при шифровании (будет сгенерирован).\n"
               << "  --iv <hex_string>    Вектор инициализации для ГОСТ (16 hex-символов). Можно опустить при шифровании для генерации случайного.\n"
               << "  -h, --help           Показать это справочное сообщение.\n\n"
               << "Примеры:\n"
-              << "  ./cipher_tool --cipher gost -e --text \"привет\" --key <64-hex-ключа>\n"
+              << "  ./cipher_tool --cipher gost --generate-key\n"
+              << "  ./cipher_tool --cipher gost -e --text \"привет\"\n"
+              << "  ./cipher_tool --cipher gost -d --text <hex-шифротекст> --key <64-hex-ключа> --iv <16-hex-iv>\n"
               << "  ./cipher_tool --cipher morse -e --text \"hello\"\n"
               << "  ./cipher_tool --cipher morse -d --text <hex-представление-морзе>\n"
               << "  ./cipher_tool --cipher rot13 -e --input message.txt --output message.enc\n";
 }
+
 
 struct GostFuncs {
     using EncryptTextFunc = GostEncryptedTextResultC (*)(const char*, const char*, const char*);
     using DecryptTextFunc = GostDecryptedTextResultC (*)(const char*, const char*, const char*);
     using EncryptFileFunc = GostFileOperationResultC (*)(const char*, const char*, const char*, const char*);
     using DecryptFileFunc = GostFileOperationResultC (*)(const char*, const char*, const char*);
+    using GenerateKeyFunc = GostKeyGenResultC (*)();
     using FreeEncResFunc = void (*)(GostEncryptedTextResultC*);
     using FreeDecResFunc = void (*)(GostDecryptedTextResultC*);
     using FreeFileResFunc = void (*)(GostFileOperationResultC*);
+    using FreeKeyResFunc = void(*)(GostKeyGenResultC*);
+
 
     EncryptTextFunc encryptText;
     DecryptTextFunc decryptText;
     EncryptFileFunc encryptFile;
     DecryptFileFunc decryptFile;
+    GenerateKeyFunc generateKey;
     FreeEncResFunc freeEncResult;
     FreeDecResFunc freeDecResult;
     FreeFileResFunc freeFileResult;
+    FreeKeyResFunc freeKeyResult;
 };
 
 struct MorseFuncs {
@@ -94,7 +103,7 @@ struct Rot13Funcs {
     using FreeEncResFunc = void (*)(EncodedResultC*);
     using FreeDecResFunc = void (*)(DecodedResultC*);
     using FreeFileResFunc = void (*)(FileOperationResultC*);
-    
+
     EncodeTextFunc encodeText;
     DecodeTextFunc decodeText;
     EncodeFileFunc encodeFile;
@@ -172,7 +181,7 @@ bool load_cipher_library(const std::string& cipher_name) {
 
     auto lib = std::make_unique<Library>();
     lib->handle = handle;
-    
+
     bool success = true;
 
     if (cipher_name == "gost") {
@@ -181,9 +190,11 @@ bool load_cipher_library(const std::string& cipher_name) {
             load_symbol<GostFuncs::DecryptTextFunc>(handle, "decryptTextGOST_C"),
             load_symbol<GostFuncs::EncryptFileFunc>(handle, "encryptFileGOST_C"),
             load_symbol<GostFuncs::DecryptFileFunc>(handle, "decryptFileGOST_C"),
-            load_symbol<GostFuncs::FreeEncResFunc>(handle, "free_gost_string_C"),
-            load_symbol<GostFuncs::FreeDecResFunc>(handle, "free_gost_string_C"),
-            load_symbol<GostFuncs::FreeFileResFunc>(handle, "free_gost_string_C")
+            load_symbol<GostFuncs::GenerateKeyFunc>(handle, "generateKeyGOST_C"),
+            load_symbol<GostFuncs::FreeEncResFunc>(handle, "free_gost_encrypted_result_C"),
+            load_symbol<GostFuncs::FreeDecResFunc>(handle, "free_gost_decrypted_result_C"),
+            load_symbol<GostFuncs::FreeFileResFunc>(handle, "free_gost_file_result_C"),
+            load_symbol<GostFuncs::FreeKeyResFunc>(handle, "free_gost_key_result_C")
         };
     } else if (cipher_name == "morse") {
         lib->funcs.morse = {
@@ -258,7 +269,7 @@ int main(int argc, char* argv[]) {
 
     if (argc > 1) {
         std::string cipher, text, inputFile, outputFile, key, iv;
-        bool encrypt = false, decrypt = false;
+        bool encrypt = false, decrypt = false, generateKey = false;
 
         for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
@@ -270,6 +281,8 @@ int main(int argc, char* argv[]) {
                 encrypt = true;
             } else if (arg == "-d" || arg == "--decrypt") {
                 decrypt = true;
+            } else if (arg == "--generate-key") {
+                generateKey = true;
             } else if (arg == "--text") {
                 text = (i + 1 < argc) ? argv[++i] : "";
             } else if (arg == "--input") {
@@ -283,8 +296,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (cipher.empty() || (encrypt == decrypt)) {
-            std::cerr << "Ошибка: Вы должны указать шифр и ровно один режим (-e или -d)." << std::endl;
+        if (cipher.empty() || (encrypt && decrypt) || (generateKey && (encrypt || decrypt))) {
+            std::cerr << "Ошибка: Вы должны указать шифр и ровно один режим (--encrypt, --decrypt или --generate-key)." << std::endl;
             printHelp(); return 1;
         }
 
@@ -295,32 +308,55 @@ int main(int argc, char* argv[]) {
         try {
             if (cipher == "gost") {
                 auto* funcs = &loaded_libraries.at(cipher)->funcs.gost;
-                if (key.empty()) throw std::runtime_error("ГОСТ требует указания ключа (--key).");
+
+                if (generateKey) {
+                    GostKeyGenResultC res = funcs->generateKey();
+                    if (res.success) {
+                        std::cout << "Сгенерированный ключ (hex): " << res.key_hex << std::endl;
+                    } else throw std::runtime_error(res.error_message ? res.error_message : "Unknown error during key generation.");
+                    funcs->freeKeyResult(&res);
+                    return 0;
+                }
 
                 if (encrypt) {
+                    if (key.empty()) {
+                        GostKeyGenResultC key_res = funcs->generateKey();
+                        if (key_res.success) {
+                            key = key_res.key_hex;
+                             std::cout << "Ключ не указан, сгенерирован новый: " << key << std::endl;
+                        } else {
+                            std::string err_msg = key_res.error_message ? key_res.error_message : "Unknown error during key generation.";
+                            funcs->freeKeyResult(&key_res);
+                            throw std::runtime_error("Не удалось сгенерировать ключ: " + err_msg);
+                        }
+                        funcs->freeKeyResult(&key_res);
+                    }
                     if (!text.empty()) {
                         GostEncryptedTextResultC res = funcs->encryptText(text.c_str(), key.c_str(), iv.c_str());
                         if (res.success) {
                             std::cout << "Шифрование успешно.\n" << "IV (hex): " << res.iv_hex << "\n" << "Шифротекст (hex): " << res.ciphertext_hex << std::endl;
-                        } else throw std::runtime_error(res.error_message);
+                        } else throw std::runtime_error(res.error_message ? res.error_message : "Unknown encryption error.");
                         funcs->freeEncResult(&res);
                     } else if (!inputFile.empty() && !outputFile.empty()) {
                         GostFileOperationResultC res = funcs->encryptFile(inputFile.c_str(), outputFile.c_str(), key.c_str(), iv.c_str());
                         if(res.success) std::cout << res.message << "\n" << "Использованный IV: " << res.used_iv_hex << std::endl;
-                        else throw std::runtime_error(res.message);
+                        else throw std::runtime_error(res.message ? res.message : "Unknown file encryption error.");
                         funcs->freeFileResult(&res);
                     } else throw std::runtime_error("Для шифрования ГОСТ укажите либо --text, либо --input и --output.");
                 } else { // Decrypt
-                    if (iv.empty()) throw std::runtime_error("Для дешифрования ГОСТ требуется вектор инициализации (--iv).");
+                    if (key.empty()) throw std::runtime_error("Для дешифрования ГОСТ требуется ключ (--key).");
+                    if (iv.empty() && !inputFile.empty()) { /* IV is read from file for decryption */ }
+                    else if (iv.empty()) throw std::runtime_error("Для дешифрования текста ГОСТ требуется вектор инициализации (--iv).");
+
                      if (!text.empty()) {
                         GostDecryptedTextResultC res = funcs->decryptText(iv.c_str(), text.c_str(), key.c_str());
                          if (res.success) std::cout << "Дешифрование успешно.\n" << "Открытый текст: " << res.plaintext << std::endl;
-                         else throw std::runtime_error(res.error_message);
+                         else throw std::runtime_error(res.error_message ? res.error_message : "Unknown decryption error.");
                          funcs->freeDecResult(&res);
                     } else if (!inputFile.empty() && !outputFile.empty()) {
                          GostFileOperationResultC res = funcs->decryptFile(inputFile.c_str(), outputFile.c_str(), key.c_str());
                          if(res.success) std::cout << res.message << std::endl;
-                         else throw std::runtime_error(res.message);
+                         else throw std::runtime_error(res.message ? res.message : "Unknown file decryption error.");
                          funcs->freeFileResult(&res);
                     } else throw std::runtime_error("Для дешифрования ГОСТ укажите либо --text (как шифротекст), либо --input и --output.");
                 }
@@ -330,19 +366,19 @@ int main(int argc, char* argv[]) {
                     if (encrypt) {
                         MorseEncodedResultC res = funcs->encodeText(text.c_str());
                         if (res.success) std::cout << "Кодирование в Морзе успешно.\n" << "Бинарные данные (hex): " << to_hex_string(res.binary_data, res.data_size) << std::endl;
-                        else throw std::runtime_error(res.error_message);
+                        else throw std::runtime_error(res.error_message ? res.error_message : "Unknown Morse encoding error.");
                         funcs->freeEncResult(&res);
                     } else {
                         std::vector<unsigned char> data = from_hex_string(text);
                         MorseDecodedResultC res = funcs->decodeText(data.data(), data.size());
                         if (res.success) std::cout << "Декодирование из Морзе успешно.\n" << "Открытый текст: " << res.plaintext << std::endl;
-                        else throw std::runtime_error(res.error_message);
+                        else throw std::runtime_error(res.error_message ? res.error_message : "Unknown Morse decoding error.");
                         funcs->freeDecResult(&res);
                     }
                 } else if (!inputFile.empty() && !outputFile.empty()) {
                     MorseFileOperationResultC res = encrypt ? funcs->encodeFile(inputFile.c_str(), outputFile.c_str()) : funcs->decodeFile(inputFile.c_str(), outputFile.c_str());
                     if(res.success) std::cout << res.message << std::endl;
-                    else throw std::runtime_error(res.message);
+                    else throw std::runtime_error(res.message ? res.message : "Unknown Morse file operation error.");
                     funcs->freeFileResult(&res);
                 } else throw std::runtime_error("Для операций с Морзе укажите либо --text, либо --input и --output.");
             } else if (cipher == "rot13") {
@@ -351,19 +387,19 @@ int main(int argc, char* argv[]) {
                     if (encrypt) {
                         EncodedResultC res = funcs->encodeText(text.c_str());
                         if(res.success) std::cout << "Кодирование ROT13+XOR успешно.\n" << "Бинарные данные (hex): " << to_hex_string(res.binary_data, res.data_size) << std::endl;
-                        else throw std::runtime_error(res.error_message);
+                        else throw std::runtime_error(res.error_message ? res.error_message : "Unknown ROT13 encoding error.");
                         funcs->freeEncResult(&res);
                     } else {
                         std::vector<unsigned char> data = from_hex_string(text);
                         DecodedResultC res = funcs->decodeText(data.data(), data.size());
                         if(res.success) std::cout << "Декодирование ROT13+XOR успешно.\n" << "Открытый текст: " << res.text << std::endl;
-                        else throw std::runtime_error(res.error_message);
+                        else throw std::runtime_error(res.error_message ? res.error_message : "Unknown ROT13 decoding error.");
                         funcs->freeDecResult(&res);
                     }
                 } else if (!inputFile.empty() && !outputFile.empty()) {
                     FileOperationResultC res = encrypt ? funcs->encodeFile(inputFile.c_str(), outputFile.c_str()) : funcs->decodeFile(inputFile.c_str(), outputFile.c_str());
                     if(res.success) std::cout << res.message << std::endl;
-                    else throw std::runtime_error(res.message);
+                    else throw std::runtime_error(res.message ? res.message : "Unknown ROT13 file operation error.");
                     funcs->freeFileResult(&res);
                 } else throw std::runtime_error("Для операций с ROT13+XOR укажите либо --text, либо --input и --output.");
             }
@@ -402,29 +438,63 @@ void handleGostMenu() {
     auto* funcs = &loaded_libraries.at("gost")->funcs.gost;
 
     int choice;
-    std::cout << "\n-- Меню ГОСТ --\n1. Зашифровать текст\n2. Расшифровать текст\n3. Зашифровать файл\n4. Расшифровать файл\nВведите ваш выбор: ";
+    std::cout << "\n-- Меню ГОСТ --\n1. Зашифровать текст\n2. Расшифровать текст\n3. Зашифровать файл\n4. Расшифровать файл\n5. Сгенерировать ключ\nВведите ваш выбор: ";
     std::cin >> choice;
     std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    
+
     std::string text, key_hex, iv_hex, inputFile, outputFile;
 
     try {
-        if (choice >= 1 && choice <= 4) {
+        if (choice == 2 || choice == 4) { // Decryption requires key
              std::cout << "Введите ключ (64 hex-символа): ";
+             std::getline(std::cin, key_hex);
+             if(key_hex.empty()){
+                std::cout << "Дешифрование требует ключ." << std::endl;
+                return;
+             }
+        } else if (choice == 1 || choice == 3) { // Encryption can generate key
+             std::cout << "Введите ключ (64 hex-символа) или оставьте пустым для генерации: ";
              std::getline(std::cin, key_hex);
         }
 
         switch (choice) {
-            case 1: { // Зашифровать текст
-                std::cout << "Введите текст для шифрования: ";
-                std::getline(std::cin, text);
-                std::cout << "Введите IV (16 hex-символов) или оставьте пустым для случайного: ";
-                std::getline(std::cin, iv_hex);
-                GostEncryptedTextResultC res = funcs->encryptText(text.c_str(), key_hex.c_str(), iv_hex.c_str());
-                if (res.success) {
-                    std::cout << "\nШифрование успешно!\n" << "IV: " << res.iv_hex << "\n" << "Шифротекст: " << res.ciphertext_hex << std::endl;
-                } else std::cerr << "Ошибка: " << res.error_message << std::endl;
-                funcs->freeEncResult(&res);
+            case 1: // Зашифровать текст
+            case 3: { // Зашифровать файл
+                if (key_hex.empty()) {
+                    GostKeyGenResultC key_res = funcs->generateKey();
+                     if (key_res.success) {
+                        key_hex = key_res.key_hex;
+                         std::cout << "-> Сгенерирован новый ключ: " << key_hex << std::endl;
+                    } else {
+                        std::cerr << "Ошибка генерации ключа: " << (key_res.error_message ? key_res.error_message : "Неизвестная ошибка") << std::endl;
+                        funcs->freeKeyResult(&key_res);
+                        return;
+                    }
+                    funcs->freeKeyResult(&key_res);
+                }
+
+                if (choice == 1) {
+                    std::cout << "Введите текст для шифрования: ";
+                    std::getline(std::cin, text);
+                    std::cout << "Введите IV (16 hex-символов) или оставьте пустым для случайного: ";
+                    std::getline(std::cin, iv_hex);
+                    GostEncryptedTextResultC res = funcs->encryptText(text.c_str(), key_hex.c_str(), iv_hex.c_str());
+                    if (res.success) {
+                        std::cout << "\nШифрование успешно!\n" << "IV: " << res.iv_hex << "\n" << "Шифротекст: " << res.ciphertext_hex << std::endl;
+                    } else std::cerr << "Ошибка: " << res.error_message << std::endl;
+                    funcs->freeEncResult(&res);
+                } else { // choice == 3
+                     std::cout << "Введите путь к входному файлу: ";
+                     std::getline(std::cin, inputFile);
+                     std::cout << "Введите путь к выходному файлу: ";
+                     std::getline(std::cin, outputFile);
+                     std::cout << "Введите IV (16 hex-символов) или оставьте пустым для случайного: ";
+                     std::getline(std::cin, iv_hex);
+                    GostFileOperationResultC res = funcs->encryptFile(inputFile.c_str(), outputFile.c_str(), key_hex.c_str(), iv_hex.c_str());
+                    std::cout << "\n" << res.message << std::endl;
+                    if(res.success) std::cout << "Использованный IV: " << res.used_iv_hex << std::endl;
+                    funcs->freeFileResult(&res);
+                }
                 break;
             }
             case 2: { // Расшифровать текст
@@ -439,20 +509,7 @@ void handleGostMenu() {
                 funcs->freeDecResult(&res);
                 break;
             }
-            case 3: { // Зашифровать файл
-                 std::cout << "Введите путь к входному файлу: ";
-                 std::getline(std::cin, inputFile);
-                 std::cout << "Введите путь к выходному файлу: ";
-                 std::getline(std::cin, outputFile);
-                 std::cout << "Введите IV (16 hex-символов) или оставьте пустым для случайного: ";
-                 std::getline(std::cin, iv_hex);
-                GostFileOperationResultC res = funcs->encryptFile(inputFile.c_str(), outputFile.c_str(), key_hex.c_str(), iv_hex.c_str());
-                std::cout << "\n" << res.message << std::endl;
-                if(res.success) std::cout << "Использованный IV: " << res.used_iv_hex << std::endl;
-                funcs->freeFileResult(&res);
-                break;
-            }
-            case 4: {
+            case 4: { // Расшифровать файл
                  std::cout << "Введите путь к входному файлу: ";
                  std::getline(std::cin, inputFile);
                  std::cout << "Введите путь к выходному файлу: ";
@@ -461,6 +518,16 @@ void handleGostMenu() {
                 std::cout << "\n" << res.message << std::endl;
                 if(res.success) std::cout << "IV, прочитанный из файла: " << res.used_iv_hex << std::endl;
                 funcs->freeFileResult(&res);
+                break;
+            }
+            case 5: { // Сгенерировать ключ
+                GostKeyGenResultC res = funcs->generateKey();
+                if (res.success) {
+                    std::cout << "\nСгенерированный ключ (hex): " << res.key_hex << std::endl;
+                } else {
+                    std::cerr << "Ошибка генерации ключа: " << (res.error_message ? res.error_message : "Неизвестная ошибка") << std::endl;
+                }
+                funcs->freeKeyResult(&res);
                 break;
             }
             default: std::cout << "Неверный выбор." << std::endl;
@@ -473,7 +540,7 @@ void handleGostMenu() {
 void handleMorseMenu() {
     if (!load_cipher_library("morse")) return;
     auto* funcs = &loaded_libraries.at("morse")->funcs.morse;
-    
+
     int choice;
     std::cout << "\n-- Меню Морзе --\n1. Кодировать текст\n2. Декодировать текст\n3. Кодировать файл\n4. Декодировать файл\nВведите ваш выбор: ";
     std::cin >> choice;
@@ -527,7 +594,7 @@ void handleMorseMenu() {
 void handleRot13Menu() {
     if (!load_cipher_library("rot13")) return;
     auto* funcs = &loaded_libraries.at("rot13")->funcs.rot13;
-    
+
     int choice;
     std::cout << "\n-- Меню ROT13 + XOR --\n1. Кодировать текст\n2. Декодировать текст\n3. Кодировать файл\n4. Декодировать файл\nВведите ваш выбор: ";
     std::cin >> choice;

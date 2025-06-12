@@ -1,4 +1,3 @@
-
 #include "gost.hpp"
 #include <algorithm>
 #include <fstream>
@@ -48,6 +47,22 @@ void generateRandomBytes(std::vector<unsigned char> &buffer, size_t length) {
     }
 }
 
+// --- Added for Key Generation ---
+GostKeyGenResult generateKeyGOST() {
+    GostKeyGenResult result;
+    try {
+        std::vector<unsigned char> key_bytes;
+        generateRandomBytes(key_bytes, GOST_KEY_SIZE_BYTES);
+        result.key_hex = bytesToHexString(key_bytes);
+        result.success = true;
+    } catch (const std::exception& e) {
+        result.error_message = std::string("C++ Exception in generateKeyGOST: ") + e.what();
+        result.success = false;
+    }
+    return result;
+}
+
+
 void pkcs7_pad(std::vector<unsigned char> &data, size_t block_size) {
     size_t padding_len = block_size - (data.size() % block_size);
     if (padding_len == 0)
@@ -64,7 +79,7 @@ bool pkcs7_unpad(std::vector<unsigned char> &data) {
     unsigned char padding_len = data.back();
     if (padding_len == 0 || padding_len > data.size() ||
         padding_len > GOST_BLOCK_SIZE_BYTES) {
-        return false; 
+        return false;
     }
     for (size_t i = 0; i < padding_len; ++i) {
         if (data[data.size() - 1 - i] != padding_len) {
